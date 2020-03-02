@@ -109,7 +109,6 @@ venv.bak/
 .idea
 
 # datasets
-datasets
 
 # pretraind model
 weights/

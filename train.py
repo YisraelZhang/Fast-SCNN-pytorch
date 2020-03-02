@@ -79,7 +79,7 @@ class Trainer(object):
                 ds,
                 cfg.data.imgs_per_gpu,
                 cfg.data.workers_per_gpu,
-                cfg.gpus,
+                # cfg.gpus,
                 dist=False) for ds in train_dataset
         ]
         val_data_loader = build_dataloader(

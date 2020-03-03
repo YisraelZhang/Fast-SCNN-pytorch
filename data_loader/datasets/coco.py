@@ -108,3 +108,8 @@ class CocoDataset(CustomDataset):
             seg_map=seg_map)
 
         return ann
+
+    @property
+    def num_class(self):
+        """Number of categories."""
+        return 81

@@ -138,7 +138,7 @@ class Trainer(object):
                                         iters_per_epoch=len(self.train_loader), power=0.9)
 
         # evaluation metrics
-        self.metric = SegmentationMetric(train_dataset.num_class)
+        self.metric = SegmentationMetric(train_dataset[0].num_class)
 
         self.best_pred = 0.0
 

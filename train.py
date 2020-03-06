@@ -26,9 +26,9 @@ def parse_args():
                         help='model name (default: fast_scnn)')
     parser.add_argument('--dataset', type=str, default='coco',
                         help='dataset name (default: coco)')
-    parser.add_argument('--base-size', type=int, default=1024,
+    parser.add_argument('--base-size', type=int, default=640,
                         help='base image size')
-    parser.add_argument('--crop-size', type=int, default=768,
+    parser.add_argument('--crop-size', type=int, default=320,
                         help='crop image size')
     parser.add_argument('--train-split', type=str, default='train',
                         help='dataset train split (default: train)')
@@ -41,7 +41,7 @@ def parse_args():
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--start_epoch', type=int, default=0,
                         metavar='N', help='start epochs (default:0)')
-    parser.add_argument('--batch-size', type=int, default=2,
+    parser.add_argument('--batch-size', type=int, default=64,
                         metavar='N', help='input batch size for training (default: 12)')
     parser.add_argument('--lr', type=float, default=1e-2, metavar='LR',
                         help='learning rate (default: 1e-2)')
@@ -70,44 +70,45 @@ def parse_args():
 
 class Trainer(object):
     def __init__(self, args, cfg=None):
-        train_dataset = [build_dataset(cfg.data.train)]
-        val_dataset = [build_dataset(cfg.data.test)]
-        if len(cfg.workflow) == 2:
-            train_dataset.append(build_dataset(cfg.data.val))
-        train_data_loaders = [
-            build_dataloader(
-                ds,
-                cfg.data.imgs_per_gpu,
-                cfg.data.workers_per_gpu,
-                # cfg.gpus,
-                dist=False) for ds in train_dataset
-        ]
-        val_data_loader = build_dataloader(
-            val_dataset,
-            imgs_per_gpu=1,
-            workers_per_gpu=cfg.data.workers_per_gpu,
-            dist=False,
-            shuffle=False)
-        self.train_loader = train_data_loaders[0]
-        self.val_loader = val_data_loader
+        # train_dataset = [build_dataset(cfg.data.train)]
+        # self.dataset= train_dataset
+        # val_dataset = [build_dataset(cfg.data.test)]
+        # if len(cfg.workflow) == 2:
+        #     train_dataset.append(build_dataset(cfg.data.val))
+        # train_data_loaders = [
+        #     build_dataloader(
+        #         ds,
+        #         cfg.data.imgs_per_gpu,
+        #         cfg.data.workers_per_gpu,
+        #         # cfg.gpus,
+        #         dist=False) for ds in train_dataset
+        # ]
+        # val_data_loader = build_dataloader(
+        #     val_dataset,
+        #     imgs_per_gpu=1,
+        #     workers_per_gpu=cfg.data.workers_per_gpu,
+        #     dist=False,
+        #     shuffle=False)
+        # self.train_loader = train_data_loaders[0]
+        # self.val_loader = val_data_loader
 
         self.args = args
-        # # image transform
-        # input_transform = transforms.Compose([
-        #     transforms.ToTensor(),
-        #     transforms.Normalize([.485, .456, .406], [.229, .224, .225]),
-        # ])
-        # # dataset and dataloader
-        # data_kwargs = {'transform': input_transform, 'base_size': args.base_size, 'crop_size': args.crop_size}
-        # train_dataset = get_segmentation_dataset(args.dataset, split=args.train_split, mode='train', **data_kwargs)
-        # val_dataset = get_segmentation_dataset(args.dataset, split='val', mode='val', **data_kwargs)
-        # self.train_loader = data.DataLoader(dataset=train_dataset,
-        #                                     batch_size=args.batch_size,
-        #                                     shuffle=True,
-        #                                     drop_last=True)
-        # self.val_loader = data.DataLoader(dataset=val_dataset,
-        #                                   batch_size=1,
-        #                                   shuffle=False)
+        # image transform
+        input_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375]),
+        ])
+        # dataset and dataloader
+        data_kwargs = {'transform': input_transform, 'base_size': args.base_size, 'crop_size': args.crop_size}
+        train_dataset = get_segmentation_dataset(args.dataset, split=args.train_split, mode='train', **data_kwargs)
+        val_dataset = get_segmentation_dataset(args.dataset, split='val', mode='val', **data_kwargs)
+        self.train_loader = data.DataLoader(dataset=train_dataset,
+                                            batch_size=args.batch_size,
+                                            shuffle=True,
+                                            drop_last=True)
+        self.val_loader = data.DataLoader(dataset=val_dataset,
+                                          batch_size=1,
+                                          shuffle=False)
 
         # create network
         self.model = get_fast_scnn(dataset=args.dataset, aux=args.aux)
@@ -138,7 +139,7 @@ class Trainer(object):
                                         iters_per_epoch=len(self.train_loader), power=0.9)
 
         # evaluation metrics
-        self.metric = SegmentationMetric(train_dataset[0].num_class)
+        self.metric = SegmentationMetric(train_dataset.num_class)
 
         self.best_pred = 0.0
 
@@ -148,14 +149,13 @@ class Trainer(object):
         for epoch in range(self.args.start_epoch, self.args.epochs):
             self.model.train()
 
-            for i, (images, img_meta, gt_bboxes, gt_labels) in enumerate(self.train_loader):
+            for i, (images, targets) in enumerate(self.train_loader):
                 cur_lr = self.lr_scheduler(cur_iters)
                 for param_group in self.optimizer.param_groups:
                     param_group['lr'] = cur_lr
 
                 images = images.to(self.args.device)
-                mask_seg = bbox2multimask(gt_bboxes, gt_labels, img_meta)
-                targets = mask_seg.to(self.args.device)
+                targets = targets.to(self.args.device)
 
                 outputs = self.model(images)
                 loss = self.criterion(outputs, targets)

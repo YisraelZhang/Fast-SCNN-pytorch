@@ -3,6 +3,8 @@ import os
 import random
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 from torch.utils.data import Dataset
 from pycocotools.coco import COCO
@@ -46,6 +48,7 @@ class CocoSegmentation(Dataset):
 
         self.coco = COCO(os.path.join(self.root, 'annotations', 'instances_'+self.split+'2017.json'))
         self.img_ids = self.coco.getImgIds()
+        self.img_ids = self.clean(self.img_ids)
 
         self.load_classes()
 
@@ -76,7 +79,10 @@ class CocoSegmentation(Dataset):
 
     def __getitem__(self, item):
         img = self.load_image(item)
-        ann, mask = self.load_anns(item, img)
+        mask = self.load_mask(item)
+        #!TODO
+        return self._img_transform(img), \
+               self._mask_transform(mask)
         # synchrosized transform
         if self.mode == 'train':
             img, mask = self._sync_transform(img, mask)
@@ -106,7 +112,11 @@ class CocoSegmentation(Dataset):
 
         # skip the image without annoations
         if len(annotation_ids) == 0:
-            return anns
+            H, W, C = np.array(img).shape
+            mask = np.zeros((self.NUM_CLASS, H, W))
+            mask[0, :, :] = 1
+            mask = torch.from_numpy(mask)[None, :, :, :]
+            return anns, mask
 
         coco_anns = self.coco.loadAnns(annotation_ids)
         for a in coco_anns:
@@ -124,12 +134,24 @@ class CocoSegmentation(Dataset):
         anns[:, 3] += anns[:, 1]
 
         H, W, C = np.array(img).shape
-        mask = np.zeros((H, W, 1))
+        mask = np.zeros((self.NUM_CLASS, H, W))
+        mask[0, :, :] = 1
         for i in anns:
             x1, y1, x2, y2, label = i.astype(np.int)
-            mask[y1:y2, x1:x2] = label+1
-        mask = Image.fromarray(mask.astype('uint8'))
+            mask[label+1, y1:y2, x1:x2] = 1
+            mask[0, y1:y2, x1:x2] = 0
+        mask = torch.from_numpy(mask)[None, :, :, :]
+
         return anns, mask
+
+    def load_mask(self, index):
+        image_info = self.coco.loadImgs(self.img_ids[index])[0]
+        maskpath = os.path.join('./data/mask', self.split + '2017',
+                                image_info['file_name'])
+        mask = Image.open(maskpath)
+        # if len(np.array(img).shape) < 3:
+        #     img = np.stack([img] * 3, axis=2)
+        return mask
 
     def coco_label_to_label(self, coco_label):
         return self.coco_labels_inverse[coco_label]
@@ -152,13 +174,13 @@ class CocoSegmentation(Dataset):
             ow = short_size
             oh = int(1.0 * h * ow / w)
         img = img.resize((ow, oh), Image.BILINEAR)
-        mask = mask.resize((ow, oh), Image.NEAREST)
+        mask = F.interpolate(mask, (oh, ow), mode='nearest')
         # center crop
         w, h = img.size
         x1 = int(round((w - outsize) / 2.))
         y1 = int(round((h - outsize) / 2.))
         img = img.crop((x1, y1, x1 + outsize, y1 + outsize))
-        mask = mask.crop((x1, y1, x1 + outsize, y1 + outsize))
+        mask = mask[:, :, y1:y1+outsize, x1:x1+outsize]
         # final transform
         img, mask = self._img_transform(img), self._mask_transform(mask)
         return img, mask
@@ -167,10 +189,10 @@ class CocoSegmentation(Dataset):
         # random mirror
         if random.random() < 0.5:
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
-            mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+            mask = mask.flip([3])
         crop_size = self.crop_size
         # random scale (short edge)
-        short_size = random.randint(int(self.base_size), int(self.base_size * 2.0))
+        short_size = random.randint(int(self.base_size * 0.5), int(self.base_size * 2.0))
         w, h = img.size
         if h > w:
             ow = short_size
@@ -179,19 +201,19 @@ class CocoSegmentation(Dataset):
             oh = short_size
             ow = int(1.0 * w * oh / h)
         img = img.resize((ow, oh), Image.BILINEAR)
-        mask = mask.resize((ow, oh), Image.NEAREST)
+        mask = F.interpolate(mask, size=(oh, ow), mode='nearest')
         # pad crop
         if short_size < crop_size:
             padh = crop_size - oh if oh < crop_size else 0
             padw = crop_size - ow if ow < crop_size else 0
             img = ImageOps.expand(img, border=(0, 0, padw, padh), fill=0)
-            mask = ImageOps.expand(mask, border=(0, 0, padw, padh), fill=0)
+            mask = F.pad(mask, (0, padw, 0, padh), value=0)
         # random crop crop_size
         w, h = img.size
         x1 = random.randint(0, w - crop_size)
         y1 = random.randint(0, h - crop_size)
         img = img.crop((x1, y1, x1 + crop_size, y1 + crop_size))
-        mask = mask.crop((x1, y1, x1 + crop_size, y1 + crop_size))
+        mask = mask[:, :, y1:y1+crop_size, x1:x1+crop_size]
         # gaussian blur as in PSP
         if random.random() < 0.5:
             img = img.filter(ImageFilter.GaussianBlur(
@@ -204,8 +226,9 @@ class CocoSegmentation(Dataset):
         return np.array(img)
 
     def _mask_transform(self, mask):
-        target = self._class_to_index(np.array(mask).astype('int32'))
-        return torch.LongTensor(np.array(target).astype('int32'))
+        # target = mask.squeeze(0)
+        _, target = mask.max(dim=1)
+        return target.squeeze(0).long()
 
     def _class_to_index(self, mask):
         H, W, _ = mask.shape
@@ -226,3 +249,13 @@ class CocoSegmentation(Dataset):
     @property
     def pred_offset(self):
         return 0
+
+    def clean(self, image_ids):
+        for index in range(len(image_ids)):
+            image_info = self.coco.loadImgs(image_ids[index])[0]
+            imgpath = os.path.join(self.root, self.split+'2017',
+                               image_info['file_name'])
+            if not os.path.exists(imgpath):
+                del image_ids[index]
+
+        return image_ids

@@ -177,3 +177,11 @@ def bbox2multimask(gt_bboxes, gt_labels, img_meta):
 
     mask = torch.stack(mask_list).cuda()
     return mask
+
+def crop_bbox(bbox, img_meta):
+    img_shape = img_meta['img_shape']
+    x1 = np.clip(bbox[0], a_min=0, a_max=img_shape[1])
+    x2 = np.clip(bbox[2], a_min=0, a_max=img_shape[1])
+    y1 = np.clip(bbox[1], a_min=0, a_max=img_shape[0])
+    y2 = np.clip(bbox[3], a_min=0, a_max=img_shape[0])
+    return np.array([x1, y1, x2, y2]).astype(np.int)

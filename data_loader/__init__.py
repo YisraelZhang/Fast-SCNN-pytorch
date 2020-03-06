@@ -1,9 +1,10 @@
 from .cityscapes import CitySegmentation
 from .datasets.coco import CocoDataset
+from .coco_np import CocoSegmentation
 
 datasets = {
     'citys': CitySegmentation,
-    'coco': CocoDataset,
+    'coco': CocoSegmentation,
 }
 
 

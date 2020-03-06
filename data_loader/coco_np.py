@@ -80,9 +80,6 @@ class CocoSegmentation(Dataset):
     def __getitem__(self, item):
         img = self.load_image(item)
         mask = self.load_mask(item)
-        #!TODO
-        return self._img_transform(img), \
-               self._mask_transform(mask)
         # synchrosized transform
         if self.mode == 'train':
             img, mask = self._sync_transform(img, mask)
@@ -226,9 +223,8 @@ class CocoSegmentation(Dataset):
         return np.array(img)
 
     def _mask_transform(self, mask):
-        # target = mask.squeeze(0)
-        _, target = mask.max(dim=1)
-        return target.squeeze(0).long()
+        target = np.array(mask).astype('int32')
+        return torch.LongTensor(target)
 
     def _class_to_index(self, mask):
         H, W, _ = mask.shape
